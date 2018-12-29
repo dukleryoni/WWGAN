@@ -215,8 +215,8 @@ netG = Generator()
 netD = Discriminator()
 netD.apply(weights_init)
 netG.apply(weights_init)
-print netG
-print netD
+print(netG)
+print(netD)
 
 if use_cuda:
     netD = netD.cuda()
