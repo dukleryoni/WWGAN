@@ -30,7 +30,7 @@ DIM = 128 # This overfits substantially; you're probably better off with 64
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 CRITIC_ITERS = 5 # How many critic iterations per generator iteration
 BATCH_SIZE = 64 # Batch size
-ITERS = 200000 # How many generator iterations to train for
+ITERS = 10 # How many generator iterations to train for
 OUTPUT_DIM = 3072 # Number of pixels in CIFAR10 (3*32*32)
 
 
@@ -94,8 +94,8 @@ class Discriminator(nn.Module):
 
 netG = Generator()
 netD = Discriminator()
-print netG
-print netD
+print(netG)
+print(netD)
 
 use_cuda = torch.cuda.is_available()
 if use_cuda:
@@ -152,7 +152,7 @@ def generate_image(frame, netG):
 # For calculating inception score
 def get_inception_score(G, ):
     all_samples = []
-    for i in xrange(10):
+    for i in range(10):
         samples_100 = torch.randn(100, 128)
         if use_cuda:
             samples_100 = samples_100.cuda(gpu)
@@ -177,14 +177,14 @@ preprocess = torchvision.transforms.Compose([
                                torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                            ])
 
-for iteration in xrange(ITERS):
+for iteration in range(ITERS):
     start_time = time.time()
     ############################
     # (1) Update D network
     ###########################
     for p in netD.parameters():  # reset requires_grad
         p.requires_grad = True  # they are set to False below in netG update
-    for i in xrange(CRITIC_ITERS):
+    for i in range(CRITIC_ITERS):
         _data = gen.next()
         netD.zero_grad()
 
