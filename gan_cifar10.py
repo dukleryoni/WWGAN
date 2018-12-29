@@ -4,7 +4,6 @@ sys.path.append(os.getcwd())
 import time
 import tflib as lib
 import tflib.save_images
-import tflib.mnist
 import tflib.cifar10
 import tflib.plot
 import tflib.inception_score
@@ -141,7 +140,7 @@ def generate_image(frame, netG):
     fixed_noise_128 = torch.randn(128, 128)
     if use_cuda:
         fixed_noise_128 = fixed_noise_128.cuda(gpu)
-    noisev = autograd.Variable(fixed_noise_128, volatile=True)
+    noisev = autograd.Variable(fixed_noise_128, requires_grad=False)
     samples = netG(noisev)
     samples = samples.view(-1, 3, 32, 32)
     samples = samples.mul(0.5).add(0.5)
@@ -156,7 +155,7 @@ def get_inception_score(G, ):
         samples_100 = torch.randn(100, 128)
         if use_cuda:
             samples_100 = samples_100.cuda(gpu)
-        samples_100 = autograd.Variable(samples_100, volatile=True)
+        samples_100 = autograd.Variable(samples_100, requires_grad = False)
         all_samples.append(G(samples_100).cpu().data.numpy())
 
     all_samples = np.concatenate(all_samples, axis=0)
@@ -208,7 +207,7 @@ for iteration in range(ITERS):
         noise = torch.randn(BATCH_SIZE, 128)
         if use_cuda:
             noise = noise.cuda(gpu)
-        noisev = autograd.Variable(noise, volatile=True)  # totally freeze netG
+        noisev = autograd.Variable(noise, requires_grad =False)  # totally freeze netG
         fake = autograd.Variable(netG(noisev).data)
         inputv = fake
         D_fake = netD(inputv)
@@ -263,7 +262,7 @@ for iteration in range(ITERS):
             # imgs = preprocess(images)
             if use_cuda:
                 imgs = imgs.cuda(gpu)
-            imgs_v = autograd.Variable(imgs, volatile=True)
+            imgs_v = autograd.Variable(imgs, requires_grad =False)
 
             D = netD(imgs_v)
             _dev_disc_cost = -D.mean().cpu().data.numpy()
