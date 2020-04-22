@@ -34,7 +34,7 @@ torch.manual_seed(manualSeed)
 dataroot = "/home/yoni/Datasets/img_align_celeba_full"
 
 # Number of workers for dataloader
-workers = 4
+workers = 1
 
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
@@ -70,7 +70,7 @@ args = parser.parse_args()
 
 args.lr = 1e-4
 
-args.beta1 = 0
+args.beta1 = 0.5
 
 args.epoch = 10
 
@@ -94,7 +94,7 @@ batch_size = args.batch
 critic_iter = 5
 
 # gradient penality factor term
-LAMBDA = 20.0
+LAMBDA = 1.0
 
 run_time = get_time_now()
 log_dir = 'logs/' + run_time+'_log' # Actually log path
@@ -111,7 +111,7 @@ dataset = dset.ImageFolder(root=dataroot,
                            ]))
 # Create the dataloader
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                         shuffle=True, num_workers=workers)
+                                         shuffle=True, num_workers=workers, drop_last=False)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
@@ -235,14 +235,10 @@ fixed_noise = torch.randn(64, nz, 1, 1, device=device)
 one = torch.cuda.FloatTensor(1, device=device)
 mone = one * -1
 
-# Establish convention for real and fake labels during training
-#real_label = 1
-#fake_label = 0
 
 # Setup Adam optimizers for both G and D
 optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.9))
 optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.9))
-
 
 ######################################################################
 # Training

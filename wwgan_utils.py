@@ -35,7 +35,7 @@ def calculate_fid(generator, nz, data, batch_size):
         g_z_fid = generator(z_fid)
         for idx_fid in range(0, batch_size):
             vutils.save_image(tensor=g_z_fid[idx_fid],
-                                         filename=generated_images_folder_path + '/' + 'img' + str(
+                                         fp=generated_images_folder_path + '/' + 'img' + str(
                                              idx * batch_size + idx_fid) + '.png',
                                          nrow=1,
                                          padding=0)
