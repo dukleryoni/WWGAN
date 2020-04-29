@@ -43,7 +43,7 @@ $ git clone https://github.com/bioinf-jku/TTUR.git
 $ wget http://bioinf.jku.at/research/ttur/ttur_stats/fid_stats_celeba.npz # get pre-computed stats for FID
 ```
 
-####Run and inspect results
+#### Run and inspect results
 Now in the `WWGAN` repo train the model by simply running `python train.py` 
 
 The user can specify hyperparamters for diffferent runs, (e.g. `--ngpu 2` for number of GPUs for training).
