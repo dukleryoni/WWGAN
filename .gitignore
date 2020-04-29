@@ -1,4 +1,11 @@
 .idea
 .ftpconfig
 *.orig
+*.tmp
 tmp
+*.p
+*.pkl
+*.tar
+*.pth.tar
+*.pth
+
