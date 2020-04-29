@@ -10,3 +10,7 @@ tmp
 *.pth
 *.npz
 *.txt
+logs
+inception_model
+Frechet_Inception_Distance
+tflib
