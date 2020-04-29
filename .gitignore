@@ -8,4 +8,5 @@ tmp
 *.tar
 *.pth.tar
 *.pth
-
+*.npz
+*.txt
