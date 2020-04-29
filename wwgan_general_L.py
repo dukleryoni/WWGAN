@@ -112,7 +112,7 @@ def buildL(grad_batch, image_batch, batch_size, color_channel=True):
     - image batch is a normalized batch of images normalized according to graph degree
     - normalization does'nt matter for our case except in edges
     - create L to also make a color channel
-    - returns the wasserstein gradient squared
+    - returns the Wasserstein Gradient Squared
     """
     w_grad_sq = 0
     total_dims = 2

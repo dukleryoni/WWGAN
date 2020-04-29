@@ -103,30 +103,29 @@ def shift(X, a, b, dim=0):
     return conv1(X)
 
 
-def shift_diamond(X, a, b, c=0, d=0, dim=0, diag=False):
+def shift_diamond_depthwise(X, a, b, c=0, d=0, dim=0, diag=False):
     """
     Input batched images of size (batch, nc, im_height, im_width)
     Applys operation X[i]*a -X[i+1]*b for the dimension chosen dim = 0 horizontal, dim = 1 vertical, dim =2 betwween channels
     """
     if diag:
         filt = torch.FloatTensor(
-            [a, b, c, d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, a, b, c, d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, a, b, c,
-             d])
-        conv1 = nn.Conv2d(3, 3, (2, 2), stride=1, bias=False)
-        filt = filt.view(3, 3, 2, 2)
+            [a, b, c, d] * 3)
+        conv1 = nn.Conv2d(3, 3, (2, 2), groups=3, stride=1, bias=False)
+        filt = filt.view(3, 1, 2, 2)
         conv1.weight.data = filt
 
     else:
         if dim == 0:
-            filt = torch.FloatTensor([a, b, c, 0, 0, 0, 0, 0, 0, 0, 0, 0, a, b, c, 0, 0, 0, 0, 0, 0, 0, 0, 0, a, b, c])
-            conv1 = nn.Conv2d(3, 3, (1, 3), stride=1, bias=False)
-            filt = filt.view(3, 3, 1, 3)
+            filt = torch.FloatTensor([a, b, c]*3)
+            conv1 = nn.Conv2d(3, 3, (1, 3), groups=3, stride=1, bias=False)
+            filt = filt.view(3, 1, 1, 3)
             conv1.weight.data = filt
 
         elif dim == 1:
-            filt = torch.FloatTensor([a, b, c, 0, 0, 0, 0, 0, 0, 0, 0, 0, a, b, c, 0, 0, 0, 0, 0, 0, 0, 0, 0, a, b, c])
-            conv1 = nn.Conv2d(3, 3, (3, 1), stride=1, bias=False)
-            filt = filt.view(3, 3, 3, 1)
+            filt = torch.FloatTensor([a, b, c]*3)
+            conv1 = nn.Conv2d(3, 3, (3, 1), stride=1, groups=3, bias=False)
+            filt = filt.view(3, 1, 3, 1)
             conv1.weight.data = filt
 
         elif dim == 2:
@@ -183,26 +182,26 @@ def buildL_diamond(grad_batch, image_batch, batch_size, color_channel=True):
 
     # immediate neighbors
     for dim in range(0, total_dims):
-        fminusf = shift_diamond(grad_batch, 1, -1, dim)
+        fminusf = shift_diamond_depthwise(grad_batch, 1, -1, dim)
         fminusf_sq = fminusf ** 2
-        XplusX = shift_diamond(image_batch, 1, 1, dim)  # By calling sum we are summing over all entries in an image
+        XplusX = shift_diamond_depthwise(image_batch, 1, 1, dim)  # By calling sum we are summing over all entries in an image
         #  and all batches, we normalize by batch size
         w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
     # far neighbors
     for dim in range(0, 2):
-        fminusf = shift_diamond(grad_batch, 1, 0, -1, dim)
+        fminusf = shift_diamond_depthwise(grad_batch, 1, 0, -1, dim)
         fminusf_sq = fminusf ** 2
 
-        XplusX = shift_diamond(image_batch, 1, 0, 1, dim)
+        XplusX = shift_diamond_depthwise(image_batch, 1, 0, 1, dim)
         w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
     # Diagonals
     for (a, b, c, d) in [(1, 0, 0, 1), (0, 1, 1, 0)]:
-        fminusf = shift_diamond(grad_batch, a, b, -c, -d, True)
+        fminusf = shift_diamond_depthwise(grad_batch, a, b, -c, -d, True)
         fminusf_sq = fminusf ** 2
 
-        XplusX = shift_diamond(image_batch, a, b, c, d, True)
+        XplusX = shift_diamond_depthwise(image_batch, a, b, c, d, True)
         w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
     w_grad = torch.sqrt(w_grad_sq)
