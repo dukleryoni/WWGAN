@@ -8,4 +8,9 @@ tmp
 *.tar
 *.pth.tar
 *.pth
-
+Frechet_Inception_Distance
+inception_model
+tflib
+imgs
+result
+logs
