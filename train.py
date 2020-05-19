@@ -5,23 +5,18 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
-import numpy as np
-import matplotlib.pyplot as plt
-from torch import autograd
-import pickle as pkl
-from wwgan_utils import get_time_now, calculate_fid, calc_wgp
-from wwgan_general_L import calc_wgp_Random
-import subprocess
+from wwgan_utils import calculate_fid, calc_wgp, make_log_dir, calc_gradient_penalty, load_from_cfg
 import argparse
 import time
+import json
 import pdb
 
+from torch.utils.tensorboard import SummaryWriter
 
 # Set random seem for reproducibility
 manualSeed = 999
@@ -36,9 +31,8 @@ dataroot = "/home/yoni/Datasets/img_align_celeba_full"
 # Number of workers for dataloader
 workers = 4
 
-# Spatial size of training images. All images will be resized to this
-#   size using a transformer.
-image_size = 64
+# Spatial size of training images. All images will be resized to this size via the transformer
+image_size = 64 # CelebA
 
 # Number of channels in the training images. For color images this is 3
 nc = 3
@@ -56,14 +50,24 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Hyper-parameter tuning')
     parser.add_argument('--lr', default=1e-4, type=float,
                         help='learning rate for D and G for ADAM optimizer')
+    parser.add_argument('--resume', default=None, type=str,
+                        help='resume from checkpoint path')
     parser.add_argument('--beta1',  default=0.5, type=float,
                         help='beta1 for ADAMs parameters')
+    parser.add_argument('--lam',  default=4.0, type=float,
+                        help='weight of gradient penalty')
+    parser.add_argument('--gam', default=1.0, type=float,
+                        help='weight of gradient penalty')
     parser.add_argument('--epoch', default=10,  type=int,
                         help='number of epochs for training ')
     parser.add_argument('--ngpu', default=1,  type=int,
                         help='number of gpus for training')
     parser.add_argument('--batch', default=64,  type=int,
                         help='batch size for training')
+    parser.add_argument('--no_wass', help='uses the traditional L2 gradient penalty',
+                        action='store_true')
+    parser.add_argument('--from_cfg', help='alternatively load args from a config file', type=str)
+
     return parser.parse_args()
 
 # custom weights initialization called on netG and netD
@@ -80,7 +84,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
-            # input is Z, going  into a convolution
+            # input is Z, going into a convolution
             nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
             nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
@@ -130,35 +134,26 @@ class Discriminator(nn.Module):
         return self.main(input)
 
 def train(args):
-    # Lists to keep track of progress
-    img_list = []
-    G_losses = []
-    D_losses = []
-    GP_losses = []
-    grad_list = []
-    wgrad_list = []
-    grad_sum_list = []
-    FID_scores = []
-    epoch_time = []
+    print("Starting Training Loop...")
+    if args.no_wass:
+        print('using traditional L2 penalty (WGAN-GP)')
+    else:
+        print('Using the WWGAN penalty')
     iters = 0
     min_score = 1.0e6
-
-    print("Starting Training Loop...")
-    # For each epoch
-    errD = None
-    errG = torch.cuda.FloatTensor([1], device=device)
-    D_x = None
-    D_G_z1 = None
+    errG = torch.cuda.FloatTensor([1], device=device) # since logging occurs before first G-pass
     D_G_z2 = 0
-    GP = 0
-    grad = 0
-    wgrad = 0
     last_time = time.time()
+
+    model_dir = 'saved_model'
+    os.mkdir(args.log_dir + '/' + model_dir)
+    # Tensorboard
+    writer = SummaryWriter(args.log_dir + '/tf_events')
+
     for epoch in range(args.epoch):
-
-        epoch_time.append((time.time() - last_time))
+        # epoch_time.append((time.time() - last_time))
+        writer.add_scalar('epoch_time', (time.time() - last_time), iters)
         last_time = time.time()
-
         # For each batch in the dataloader
         for i, data in enumerate(dataloader, 0):
             ############################
@@ -169,39 +164,31 @@ def train(args):
                 param.requires_grad_(True)
 
             # Critic updates
-            # for _ in range(critic_iter):
             netD.zero_grad()
-            # Format batch
-            real_cpu = data[0].to(device)
-            b_size = real_cpu.size(0)
-            # Forward pass real batch through D
-            output_real = netD(real_cpu).view(-1)
-            # Calculate loss on all-real batch
+            # train real batch
+            real_gpu = data[0].to(device)
+            b_size = real_gpu.size(0)
+            output_real = netD(real_gpu).view(-1)
             errD_real = output_real.mean()
-            # Calculate gradients for D in backward pass
-            #errD_real.backward(mone)
             D_x = output_real.mean().item()
-
             # Train with all-fake batch
-            # Generate batch of latent vectors
             noise = torch.randn(b_size, nz, 1, 1, device=device)
             # Generate fake image batch with G
             fake = netG(noise)
-            # Classify all fake batch with D
             output_fake = netD(fake.detach()).view(-1)
             # Calculate D's loss on the all-fake batch
             errD_fake = output_fake.mean()
-            # Calculate the gradients for this batch
-            #errD_fake.backward(one)
             D_G_z1 = errD_fake.item()
-            # Add the gradients from the all-real and all-fake batches
 
-            #gradient_penalty = calc_gradient_penalty(netD, real_cpu, fake, b_size, nc, image_size, LAMBDA)
-            gradient_penalty, wgrad, grad, grad_sum = calc_wgp(netD, real_cpu, fake, b_size, nc, image_size, LAMBDA)#, gamma =2, a=0.5, b=0.1)
-            wgrad_list.append(wgrad)
-            grad_list.append(grad)
-            grad_sum_list.append(grad_sum)
-            #gradient_penalty.backward(one)
+            if args.no_wass:
+                gradient_penalty = calc_gradient_penalty(netD, real_gpu, fake, args.lam)
+            else:
+                gradient_penalty, wgrad, L2_grad, sum_grad = calc_wgp(netD, real_gpu, fake, args.lam, args.gam)#, gamma =2, a=0.5, b=0.1)
+
+                writer.add_scalar('Wasserstein gradient norm', wgrad, iters)
+                writer.add_scalar('L2 gradient norm', L2_grad, iters)
+                writer.add_scalar('Sum gradient norm (normalized)', sum_grad, iters)
+
             GP = gradient_penalty.item()
 
             errD = errD_fake - errD_real + gradient_penalty
@@ -234,63 +221,60 @@ def train(args):
                       % (epoch, args.epoch, i, len(dataloader),
                          errD.item(), -1*errG.item(), GP, D_x, D_G_z1, D_G_z2))
 
-            # Save Losses for plotting later
-            G_losses.append(errG.item())
-            D_losses.append(errD.item())
-            GP_losses.append(GP)
+            writer.add_scalar(f'loss/G_losses', errG.item(), iters)
+            writer.add_scalar(f'loss/D_losses', errD.item(), iters)
+            writer.add_scalar(f'loss/Gradient_penalty_losses', GP, iters)
 
             # Check how the generator is doing by saving G's output on fixed_noise
             if (iters % 1000 == 0) or ((epoch == args.epoch-1) and (i == len(dataloader)-1)):
                 with torch.no_grad():
                     fake = netG(fixed_noise).detach().cpu()
-                img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
-                print('saving temporary data')
-                temp_data = {'G_losses': G_losses, 'D_losses':D_losses, 'GP_losses' : GP_losses, 'FID_scores':\
-                    FID_scores, 'grad_list': grad_list, 'wgrad_list': wgrad_list, 'grad_sum_list': grad_sum_list}
-                pkl.dump(temp_data, open(log_dir+ '/temp_data.p', 'wb'))
+                epoch_images = vutils.make_grid(fake, padding=2, normalize=True)
+                writer.add_image('fixed_seed_genreated_images', epoch_images, iters)
 
             iters += 1
 
 
         print('calculating FID now')
         score = calculate_fid(netG, nz, data='celebA', batch_size=batch_size)
-        FID_scores.append(score)
+        writer.add_scalar('FID_score', score, iters)
         if score < min_score:
             min_score = score
-            torch.save(netG.state_dict(), log_dir+ '/early_stopG.pth.tar')
-
-        torch.save(netD.state_dict(), log_dir + '/early_stopD.pth.tar')
-
-    # Save results
-    print('saving results')
-    save_data = {'img_list': img_list, 'G_losses': G_losses, 'D_losses': D_losses, 'GP_losses': GP_losses, 'FID_scores': \
-        FID_scores, 'grad_list': grad_list, 'wgrad_list': wgrad_list, 'grad_sum_list': grad_sum_list,
-                 'epoch_time': epoch_time}
-
-    pkl.dump(save_data, open(log_dir + '/WGAN_data' + run_time + 'trial' + '.p', 'wb'))
+            torch.save(netG.state_dict(), args.log_dir+ '/' + model_dir +'/Gen.pth.tar')
+        torch.save(netD.state_dict(), args.log_dir + '/' + model_dir + '/Disc.pth.tar') # Todo does this make sense? saving D after every epoch...
+    writer.close()
 
 if __name__ == '__main__':
     args = parse_args()
+    if args.from_cfg is not None:
+        my_config = args.from_cfg
+        my_log_dir = make_log_dir(prefix='logs')
+        args = load_from_cfg(my_config)
+        args.log_dir = my_log_dir
+        with open(my_log_dir + '/to_config.json', 'w+') as arg_file:
+            json.dump(my_config, arg_file) # save the path to the config not the args.
+    else:
+        args.log_dir = make_log_dir(prefix='logs')
 
-    # number of epochs
     beta1 = args.beta1
-
-    # Number of GPUs available. Use 0 for CPU mode.
-
-    # Batch size during training
     batch_size = args.batch
-
     # Number of critic iterations for WGAN
     critic_iter = 5
-
     # gradient penality factor term
-    LAMBDA = 4.0
+    LAMBDA = args.lam
 
-    run_time = get_time_now()
-    log_dir = 'logs/' + run_time + '_log'  # Actually log path
-    os.mkdir(log_dir)
+    setattr(args, 'critic_iter', critic_iter)
+    setattr(args, 'dataloader_workers', workers)
+    setattr(args, 'number of channels', nc)
+    setattr(args, 'image_size', image_size)
+    setattr(args, 'nc', nc)
+    setattr(args, 'nz', nz)
+    setattr(args, 'ngf', ngf)
+    setattr(args, 'ndf', ndf)
+    setattr(args, 'ngf', ngf)
+    with open(args.log_dir+ '/config.json', 'w+') as arg_file:
+        json.dump(vars(args), arg_file)
 
-    # We can use an image folder dataset the way we have it setup.
     # Create the dataset
     dataset = dset.ImageFolder(root=dataroot,
                                transform=transforms.Compose([
@@ -303,36 +287,41 @@ if __name__ == '__main__':
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
                                              shuffle=True, num_workers=workers, drop_last=False)
 
-    ######################################################################
     # Intialize network, optimizer, and set-aside fixed noise for generator evaluation
-
     device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
     # Create the generator and discriminator
     netG = Generator(args.ngpu).to(device)
     netD = Discriminator(args.ngpu).to(device)
 
-    # Handle multi-gpu if desired
+    if args.resume is not None:
+        try:
+            netG.load_state_dict(torch.load(args.resume + '/Gen.pth.tar'))
+            print('Loaded generator from '+ args.resume)
+        except:
+            print('Failed to load generator from ', args.resume)
+        try:
+            netD.load_state_dict(torch.load(args.resume + '/Disc.pth.tar'))
+            print('loaded discriminator from ' + args.resume)
+        except:
+            print('Failed to load discriminator ', args.resume)
+
+    else:
+        # custom init
+        netG.apply(weights_init)
+        netD.apply(weights_init)
+
+    # Load models to multi-gpu if desired
     if (device.type == 'cuda') and (args.ngpu > 1):
         netG = nn.DataParallel(netG, list(range(args.ngpu)))
         netD = nn.DataParallel(netD, list(range(args.ngpu)))
 
-    # Apply the weights_init function to randomly initialize all weights
-    #  to mean=0, stdev=0.2.
-    netG.apply(weights_init)
-    netD.apply(weights_init)
-
     print(netG, netD)
 
-    # Create batch of latent vectors that we will use to visualize
-    #  the progression of the generator
+    # Create batch of latent vectors that we will use to visualize the progression of the generator
     fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-    one = torch.cuda.FloatTensor(1, device=device)
-    mone = one * -1
 
     # Setup Adam optimizers for both G and D
     optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.9))
     optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.9))
 
-    ######################################################################
-    # Training
     train(args)
