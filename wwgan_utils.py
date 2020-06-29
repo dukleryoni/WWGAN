@@ -9,7 +9,7 @@ import os
 import numpy as np
 import json
 
-device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
+device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
 
 # Helper function to get time for logging purposes
 def get_time_now_split(split=True):
@@ -30,16 +30,18 @@ class AttributeDict(dict):
     def __setattr__(self, attr, value):
         self[attr] = value
 
-def load_from_cfg(cfg_path):
+def load_from_json(cfg_path):
     print('Loading the arguments from the config file {}'.format(cfg_path))
     arg_dict = json.load(open(cfg_path, 'r+'))
     return AttributeDict(arg_dict)
-
 
 def make_log_dir(prefix=''):
     dirs = get_time_now_split()
     dirs.insert(0, prefix)
     try:
+        while(os.path.exists('/'.join(dirs))):
+            print(dirs)
+            dirs[-1] = dirs[-1][:-1] + str(int(dirs[-1][-1])+1)
         os.mkdir('/'.join(dirs))
     except:
         try:
@@ -52,11 +54,12 @@ def make_log_dir(prefix=''):
 
 
 # Calculates FID score of generator for CelebA
-def calculate_fid(generator, nz, data, batch_size, cuda=True):
-    if data == 'cifar10':
-        fid_stats_path = './fid_stats_cifar10_train.npz'
-    elif data == 'celebA':
-        fid_stats_path = './fid_stats_celeba.npz'
+def calculate_fid(generator, nz, data, batch_size, cuda=True, fid_stats_path=None):
+    if fid_stats_path is None:
+        if data == 'cifar10':
+            fid_stats_path = './fid_stats_cifar10_train.npz'
+        elif data == 'celebA':
+            fid_stats_path = './fid_stats_celeba.npz'
 
     #Saves images to be calculated for FID - not necessary why not pass through inception first to save time
     start_t = time.time()
@@ -106,7 +109,7 @@ def shift(X, a, b, dim=0):
         filt = filt.view(3, 3, 1, 1)
         conv1.weight.data = filt
 
-    device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
+    device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     conv1.to(device)
     conv1.requires_grad = False
     return conv1(X)
@@ -143,7 +146,7 @@ def shift_diamond_depthwise(X, a, b, c=0, d=0, dim=0, diag=False):
             filt = filt.view(3, 3, 1, 1)
             conv1.weight.data = filt
 
-    device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
+    device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     conv1.to(device)
     conv1.requires_grad = False
     return conv1(X)
@@ -191,18 +194,18 @@ def buildL_diamond(grad_batch, image_batch, color_channel=True):
 
     # immediate neighbors
     for dim in range(0, total_dims):
-        fminusf = shift_diamond_depthwise(grad_batch, 1, -1, dim)
+        fminusf = shift_diamond_depthwise(grad_batch, 1, -1, dim=dim)
         fminusf_sq = fminusf ** 2
-        XplusX = shift_diamond_depthwise(image_batch, 1, 1, dim)  # By calling sum we are summing over all entries in an image
+        XplusX = shift_diamond_depthwise(image_batch, 1, 1, dim=dim)  # By calling sum we are summing over all entries in an image
         #  and all batches, we normalize by batch size
-        w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
-
+        w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3)) # Here  and below(1 + XplusX/2) Undos normalization taking [-1,1] -> [0,1]
+                                                                           # Inverts the Dataset and torchvision.transforms
     # farther neighbors
     for dim in range(0, 2):
-        fminusf = shift_diamond_depthwise(grad_batch, 1, 0, -1, dim) # f_i - f_j
+        fminusf = shift_diamond_depthwise(grad_batch, 1, 0, -1, dim=dim) # f_i - f_j
         fminusf_sq = fminusf ** 2
 
-        XplusX = shift_diamond_depthwise(image_batch, 1, 0, 1, dim) # X_i + X_j
+        XplusX = shift_diamond_depthwise(image_batch, 1, 0, 1, dim=dim) # X_i + X_j
         w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
     # # Diagonals
@@ -211,9 +214,8 @@ def buildL_diamond(grad_batch, image_batch, color_channel=True):
         fminusf_sq = fminusf ** 2
 
         XplusX = shift_diamond_depthwise(image_batch, a, b, c, d, diag=True)
-        w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3)) # Undos normalization taking [-1,1] -> [0,1] as done by Dataset and torchvision.transforms
+        w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
-    # w_grad = torch.sqrt(w_grad_sq)
     return w_grad_sq # return the sqaured version.
 
 # Calculates gradient for WGAN-GP

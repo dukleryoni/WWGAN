@@ -10,7 +10,7 @@ import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
-from wwgan_utils import calculate_fid, calc_wgp, make_log_dir, calc_gradient_penalty, load_from_cfg
+from wwgan_utils import calculate_fid, calc_wgp, make_log_dir, calc_gradient_penalty, load_from_json
 import argparse
 import time
 import json
@@ -25,11 +25,6 @@ print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
-# Root directory for dataset
-dataroot = "/home/yoni/Datasets/img_align_celeba_full"
-
-# Number of workers for dataloader
-workers = 4
 
 # Spatial size of training images. All images will be resized to this size via the transformer
 image_size = 64 # CelebA
@@ -66,7 +61,7 @@ def parse_args():
                         help='batch size for training')
     parser.add_argument('--no_wass', help='uses the traditional L2 gradient penalty',
                         action='store_true')
-    parser.add_argument('--from_cfg', help='alternatively load args from a config file', type=str)
+    parser.add_argument('--from_json', help='alternatively load args from a config file', type=str)
 
     return parser.parse_args()
 
@@ -134,14 +129,30 @@ class Discriminator(nn.Module):
         return self.main(input)
 
 def train(args):
+    # Root directory for dataset
+    dataroot = "/home/yoni/Datasets/img_align_celeba_full"
+
+    # Create the dataset
+    dataset = dset.ImageFolder(root=dataroot,
+                               transform=transforms.Compose([
+                                   transforms.Resize(args.image_size),
+                                   transforms.CenterCrop(args.image_size),
+                                   transforms.ToTensor(),
+                                   transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                               ]))
+    # Create the dataloader
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch,
+                                             shuffle=True, num_workers=args.workers, drop_last=False)
+
     print("Starting Training Loop...")
     if args.no_wass:
         print('using traditional L2 penalty (WGAN-GP)')
     else:
         print('Using the WWGAN penalty')
+
     iters = 0
     min_score = 1.0e6
-    errG = torch.cuda.FloatTensor([1], device=device) # since logging occurs before first G-pass
+    errG = torch.cuda.FloatTensor([1], device=args.device) # since logging occurs before first G-pass
     D_G_z2 = 0
     last_time = time.time()
 
@@ -149,6 +160,11 @@ def train(args):
     os.mkdir(args.log_dir + '/' + model_dir)
     # Tensorboard
     writer = SummaryWriter(args.log_dir + '/tf_events')
+    netD = args.netD
+    netG= args.netG
+    optimizerD = args.optimizerD
+    optimizerG = args.optimizerG
+    fixed_noise = args.fixed_noise
 
     for epoch in range(args.epoch):
         # epoch_time.append((time.time() - last_time))
@@ -166,13 +182,13 @@ def train(args):
             # Critic updates
             netD.zero_grad()
             # train real batch
-            real_gpu = data[0].to(device)
+            real_gpu = data[0].to(args.device)
             b_size = real_gpu.size(0)
             output_real = netD(real_gpu).view(-1)
             errD_real = output_real.mean()
             D_x = output_real.mean().item()
             # Train with all-fake batch
-            noise = torch.randn(b_size, nz, 1, 1, device=device)
+            noise = torch.randn(b_size, args.nz, 1, 1, device=args.device)
             # Generate fake image batch with G
             fake = netG(noise)
             output_fake = netD(fake.detach()).view(-1)
@@ -198,12 +214,12 @@ def train(args):
             ############################
             # (2) Update G network: maximize log(D(G(z)))
             ###########################
-            if iters % critic_iter == critic_iter - 1:
+            if iters % args.critic_iter == args.critic_iter - 1:
                 for param in netD.parameters():
                     param.requires_grad_(False)
                 netG.zero_grad()
                 # Since we just updated D, perform another forward pass of all-fake batch through D
-                noise = torch.randn(batch_size, nz, 1, 1, device=device)
+                noise = torch.randn(args.batch, args.nz, 1, 1, device=args.device)
                 # Generate fake image batch with G
                 fake = netG(noise)
                 output = netD(fake).view(-1)
@@ -236,7 +252,7 @@ def train(args):
 
 
         print('calculating FID now')
-        score = calculate_fid(netG, nz, data='celebA', batch_size=batch_size)
+        score = calculate_fid(netG, args.nz, data='celebA', batch_size=args.batch)
         writer.add_scalar('FID_score', score, iters)
         if score < min_score:
             min_score = score
@@ -246,82 +262,71 @@ def train(args):
 
 if __name__ == '__main__':
     args = parse_args()
-    if args.from_cfg is not None:
-        my_config = args.from_cfg
+    if args.from_json is not None:
+        my_config = args.from_json
         my_log_dir = make_log_dir(prefix='logs')
-        args = load_from_cfg(my_config)
+        args = load_from_json(my_config)
         args.log_dir = my_log_dir
         with open(my_log_dir + '/to_config.json', 'w+') as arg_file:
             json.dump(my_config, arg_file) # save the path to the config not the args.
     else:
         args.log_dir = make_log_dir(prefix='logs')
 
-    beta1 = args.beta1
     batch_size = args.batch
     # Number of critic iterations for WGAN
     critic_iter = 5
     # gradient penality factor term
     LAMBDA = args.lam
+    workers = 4
+    image_size = 64
 
     setattr(args, 'critic_iter', critic_iter)
-    setattr(args, 'dataloader_workers', workers)
-    setattr(args, 'number of channels', nc)
+    setattr(args, 'workers', workers)
+    setattr(args, 'nc', nc)
     setattr(args, 'image_size', image_size)
     setattr(args, 'nc', nc)
     setattr(args, 'nz', nz)
     setattr(args, 'ngf', ngf)
     setattr(args, 'ndf', ndf)
-    setattr(args, 'ngf', ngf)
     with open(args.log_dir+ '/config.json', 'w+') as arg_file:
         json.dump(vars(args), arg_file)
 
-    # Create the dataset
-    dataset = dset.ImageFolder(root=dataroot,
-                               transform=transforms.Compose([
-                                   transforms.Resize(image_size),
-                                   transforms.CenterCrop(image_size),
-                                   transforms.ToTensor(),
-                                   transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-                               ]))
-    # Create the dataloader
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                             shuffle=True, num_workers=workers, drop_last=False)
 
     # Intialize network, optimizer, and set-aside fixed noise for generator evaluation
-    device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
+    args.device = torch.device("cuda" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
     # Create the generator and discriminator
-    netG = Generator(args.ngpu).to(device)
-    netD = Discriminator(args.ngpu).to(device)
+    args.netG = Generator(args.ngpu).to(args.device)
+    args.netD = Discriminator(args.ngpu).to(args.device)
 
     if args.resume is not None:
         try:
-            netG.load_state_dict(torch.load(args.resume + '/Gen.pth.tar'))
+            args.netG.load_state_dict(torch.load(args.resume + '/Gen.pth.tar'))
             print('Loaded generator from '+ args.resume)
         except:
             print('Failed to load generator from ', args.resume)
         try:
-            netD.load_state_dict(torch.load(args.resume + '/Disc.pth.tar'))
+            args.netD.load_state_dict(torch.load(args.resume + '/Disc.pth.tar'))
             print('loaded discriminator from ' + args.resume)
         except:
             print('Failed to load discriminator ', args.resume)
 
     else:
         # custom init
-        netG.apply(weights_init)
-        netD.apply(weights_init)
+        args.netG.apply(weights_init)
+        args.netD.apply(weights_init)
 
     # Load models to multi-gpu if desired
-    if (device.type == 'cuda') and (args.ngpu > 1):
-        netG = nn.DataParallel(netG, list(range(args.ngpu)))
-        netD = nn.DataParallel(netD, list(range(args.ngpu)))
+    if (args.device.type == 'cuda') and (args.ngpu > 1):
+        args.netG = nn.DataParallel(args.netG, list(range(args.ngpu)))
+        args.netD = nn.DataParallel(args.netD, list(range(args.ngpu)))
 
-    print(netG, netD)
+    print(args.netG, args.netD)
 
     # Create batch of latent vectors that we will use to visualize the progression of the generator
-    fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+    args.fixed_noise = torch.randn(64, nz, 1, 1, device=args.device)
 
     # Setup Adam optimizers for both G and D
-    optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.9))
-    optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.9))
+    args.optimizerD = optim.Adam(args.netD.parameters(), lr=args.lr, betas=(args.beta1, 0.9))
+    args.optimizerG = optim.Adam(args.netG.parameters(), lr=args.lr, betas=(args.beta1, 0.9))
 
     train(args)

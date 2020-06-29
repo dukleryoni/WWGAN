@@ -87,7 +87,7 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
                                          shuffle=True, num_workers=workers, drop_last=True)
 
 # Decide which device we want to run on
-device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
+device = torch.device("cuda" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 
 # custom weights initialization called on netG and netD
