@@ -191,18 +191,18 @@ def buildL_diamond(grad_batch, image_batch, color_channel=True):
 
     # immediate neighbors
     for dim in range(0, total_dims):
-        fminusf = shift_diamond_depthwise(grad_batch, 1, -1, dim)
+        fminusf = shift_diamond_depthwise(grad_batch, 1, -1, dim=dim)
         fminusf_sq = fminusf ** 2
-        XplusX = shift_diamond_depthwise(image_batch, 1, 1, dim)  # By calling sum we are summing over all entries in an image
+        XplusX = shift_diamond_depthwise(image_batch, 1, 1, dim=dim)  # By calling sum we are summing over all entries in an image
         #  and all batches, we normalize by batch size
         w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
     # farther neighbors
     for dim in range(0, 2):
-        fminusf = shift_diamond_depthwise(grad_batch, 1, 0, -1, dim) # f_i - f_j
+        fminusf = shift_diamond_depthwise(grad_batch, 1, 0, -1, dim=dim) # f_i - f_j
         fminusf_sq = fminusf ** 2
 
-        XplusX = shift_diamond_depthwise(image_batch, 1, 0, 1, dim) # X_i + X_j
+        XplusX = shift_diamond_depthwise(image_batch, 1, 0, 1, dim=dim) # X_i + X_j
         w_grad_sq += torch.sum((fminusf_sq * (1 + XplusX / 2)), (1, 2, 3))
 
     # # Diagonals
